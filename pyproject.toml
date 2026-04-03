@@ -65,7 +65,7 @@ Issues = "https://github.com/tanaylab/pyprego/issues"
 packages = ["pyprego"]
 
 [tool.setuptools.package-data]
-pyprego = ["py.typed"]
+pyprego = ["py.typed", "data/*.csv.gz", "data/*.csv"]
 
 [tool.ruff]
 line-length = 120

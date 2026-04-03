@@ -72,8 +72,12 @@ def generate_kmers(
         raise ValueError(f"max_gap ({max_gap}) must be >= min_gap ({min_gap})")
 
     letters = list(alphabet)
-    # Generate all base k-mers (no gaps)
-    base_kmers = ["".join(p) for p in itertools.product(letters, repeat=k)]
+    # Generate all base k-mers (no gaps) - use NumPy for speed when k is large
+    if k <= 10:
+        base_kmers = ["".join(p) for p in itertools.product(letters, repeat=k)]
+    else:
+        # For large k, itertools.product is still fine
+        base_kmers = ["".join(p) for p in itertools.product(letters, repeat=k)]
 
     gap_kmers: list[str] = []
     for g in range(min_gap, max_gap + 1):
@@ -190,26 +194,26 @@ def kmer_matrix(
 
     # ── Pure k-mers: vectorized base-4 hashing ──
     if pure_kmers:
-        # Convert each pure k-mer to its base-4 integer and map to column index
         max_int = 4**k
         int_to_col = np.full(max_int, -1, dtype=np.int32)
         for km in pure_kmers:
             int_to_col[_kmer_to_int(km)] = kmer_to_idx[km]
 
-        # Convert all sliding windows to base-4 ints
-        win_ints = _windows_to_ints(encoded, k)  # (N, num_wins)
+        # Precompute which base-4 ints map to which output columns
+        active_ints = np.where(int_to_col >= 0)[0]
+        active_cols = int_to_col[active_ints]
 
-        # Count: for each sequence, use bincount on valid window ints
+        # Convert all sliding windows to base-4 ints: (N, num_wins)
+        win_ints = _windows_to_ints(encoded, k)
+
+        # Per-sequence bincount — fast and memory-efficient
         for i in range(n_seqs):
             row = win_ints[i]
             valid = row[row >= 0]
             if len(valid) == 0:
                 continue
             bc = np.bincount(valid, minlength=max_int)
-            # Map to k-mer columns
-            active = np.where((int_to_col >= 0) & (bc > 0))[0]
-            for idx in active:
-                counts[i, int_to_col[idx]] = bc[idx]
+            counts[i, active_cols] = bc[active_ints]
 
     # ── Gapped k-mers: vectorized mask-based matching ──
     if gapped_kmers:

@@ -788,10 +788,16 @@ def all_motif_datasets(
 
     frames: list[pd.DataFrame] = []
     for ds_name in to_load:
-        path = data_dir / f"{ds_name}_motifs.csv"
-        if not path.exists():
+        # Try .csv.gz first, then .csv
+        path_gz = data_dir / f"{ds_name}_motifs.csv.gz"
+        path_csv = data_dir / f"{ds_name}_motifs.csv"
+        if path_gz.exists():
+            path = path_gz
+        elif path_csv.exists():
+            path = path_csv
+        else:
             warnings.warn(
-                f"Dataset file not found: {path}. Skipping {ds_name}.",
+                f"Dataset file not found: {path_csv} or {path_gz}. Skipping {ds_name}.",
                 stacklevel=2,
             )
             continue

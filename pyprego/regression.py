@@ -658,42 +658,163 @@ class _PWMLRegression:
         return probs
 
     def choose_best_move(self) -> tuple[int, int, float]:
-        """Evaluate all (position, move) combinations and pick the best."""
+        """Evaluate all (position, move) combinations and pick the best.
+
+        Vectorised: pre-computes all candidate probability vectors, then
+        batch-evaluates energies for all moves at once.
+        """
         K = self.motif_len
         neigh_size = len(self._cur_neigh)
         n_moves = K * neigh_size
 
-        # Compute fold scores for all moves
-        scores = np.zeros((self.num_folds, n_moves))
-        steps_list: list[tuple[int, int]] = []
+        # ── Pre-compute all candidate probability vectors: (n_moves, 4) ──
+        all_probs = np.empty((n_moves, 4))
+        steps_pos = np.empty(n_moves, dtype=int)  # which PSSM position
+        steps_step = np.empty(n_moves, dtype=int)  # which neighbourhood move
 
         idx = 0
         for pos in range(K):
             for step in range(neigh_size):
-                steps_list.append((pos, step))
-                probs = self._compute_step_probs(pos, step)
-                for f in range(self.num_folds):
-                    scores[f, idx] = self.compute_cur_fold_score(pos, probs, f)
+                steps_pos[idx] = pos
+                steps_step[idx] = step
+                all_probs[idx] = self._compute_step_probs(pos, step)
                 idx += 1
 
-        # Rank within each fold (ascending order, so higher rank = better score)
+        # ── Batch-compute energies for all moves ──
+        # For each move m at position p:
+        #   energy[seq] = sum_nuc all_probs[m, nuc] * derivs[seq, p, nuc]
+        # = all_probs[m] @ derivs[seq, p].T
+        #
+        # derivs has shape (n_seq, K, 4)
+        # For move m with position p: energy[seq] = derivs[seq, p, :] @ all_probs[m, :]
+        #
+        # Group moves by position for efficient batch multiply:
+        if self.score_metric == "r2":
+            scores = self._choose_best_move_r2_batch(
+                all_probs, steps_pos, n_moves
+            )
+        else:
+            scores = self._choose_best_move_ks_batch(
+                all_probs, steps_pos, n_moves
+            )
+
+        # Rank within each fold
         ranks = np.zeros((self.num_folds, n_moves), dtype=int)
         for f in range(self.num_folds):
             order = np.argsort(scores[f])
             ranks[f, order] = np.arange(n_moves)
 
-        # Average ranks (integer division as in C++)
         avg_ranks = ranks.sum(axis=0) // self.num_folds
 
         best_idx = int(np.argmax(avg_ranks))
-        best_pos, best_step = steps_list[best_idx]
-        probs = self._compute_step_probs(best_pos, best_step)
+        best_pos = int(steps_pos[best_idx])
+        best_step = int(steps_step[best_idx])
+        probs = all_probs[best_idx]
         best_score = self.compute_cur_score(best_pos, probs)
 
         if self.verbose:
             print(f"  best step={best_step} pos={best_pos} score={best_score:.6f}")
 
         return best_pos, best_step, best_score
+
+    def _choose_best_move_r2_batch(
+        self, all_probs: np.ndarray, steps_pos: np.ndarray, n_moves: int
+    ) -> np.ndarray:
+        """Batch R2 computation for all candidate moves."""
+        mask = self.train_mask
+        n_train = self.train_n
+        scores = np.zeros((self.num_folds, n_moves))
+
+        # For each unique position, compute energies for all moves at that position
+        for pos in range(self.motif_len):
+            move_mask = steps_pos == pos
+            move_indices = np.where(move_mask)[0]
+            if len(move_indices) == 0:
+                continue
+
+            probs_at_pos = all_probs[move_indices]  # (n_moves_at_pos, 4)
+            derivs_at_pos = self.derivs[:, pos, :]  # (n_seq, 4)
+
+            # Energies for all moves: (n_seq, n_moves_at_pos)
+            energies = derivs_at_pos @ probs_at_pos.T  # (n_seq, n_moves_at_pos)
+            energies[~mask] = 0.0
+
+            if self.log_energy:
+                energies = np.where(mask[:, None], np.log(energies + self.energy_epsilon), 0.0)
+
+            for fi in range(self.num_folds):
+                if self.num_folds == 1:
+                    fold_mask = mask
+                    fold_n = n_train
+                    fold_avg = self.data_avg
+                    fold_var = self.data_var
+                else:
+                    fold_mask = mask & (self.folds == fi)
+                    fold_n = int(self.fold_sizes[fi])
+                    fold_avg = self.data_avg_fold[fi]
+                    fold_var = self.data_var_fold[fi]
+
+                e_fold = energies[fold_mask]  # (fold_n, n_moves_at_pos)
+                ex = e_fold.sum(axis=0) / fold_n
+                ex2 = (e_fold ** 2).sum(axis=0) / fold_n
+                pred_var = ex2 - ex ** 2
+
+                for rd in range(self.rdim):
+                    resp_fold = self.response[fold_mask, rd]  # (fold_n,)
+                    xy = (e_fold * resp_fold[:, None]).sum(axis=0) / fold_n
+                    cov = xy - ex * fold_avg[rd]
+                    denom = pred_var * fold_var[rd]
+                    r2 = np.where(denom > 0, cov ** 2 / denom, 0.0)
+                    scores[fi, move_indices] += r2
+
+        return scores
+
+    def _choose_best_move_ks_batch(
+        self, all_probs: np.ndarray, steps_pos: np.ndarray, n_moves: int
+    ) -> np.ndarray:
+        """Batch KS computation for all candidate moves."""
+        mask = self.train_mask
+        scores = np.zeros((self.num_folds, n_moves))
+
+        for pos in range(self.motif_len):
+            move_mask = steps_pos == pos
+            move_indices = np.where(move_mask)[0]
+            if len(move_indices) == 0:
+                continue
+
+            probs_at_pos = all_probs[move_indices]  # (n_at_pos, 4)
+            derivs_at_pos = self.derivs[:, pos, :]  # (n_seq, 4)
+            energies = derivs_at_pos @ probs_at_pos.T  # (n_seq, n_at_pos)
+
+            resp = self.response[:, 0]
+
+            for fi in range(self.num_folds):
+                if self.num_folds == 1:
+                    fold_mask = mask
+                else:
+                    fold_mask = mask & (self.folds == fi)
+
+                e_fold = energies[fold_mask]  # (fold_n, n_at_pos)
+                resp_fold = resp[fold_mask]
+                eps_fold = self.data_epsilon[fold_mask]
+
+                n_1 = resp_fold.sum()
+                n_0 = len(resp_fold) - n_1
+                if n_0 == 0 or n_1 == 0:
+                    continue
+
+                # Vectorized KS for all moves at this position
+                # Precompute step increments from response
+                steps = np.where(resp_fold == 0, -1.0 / n_0, 1.0 / n_1)  # (fold_n,)
+
+                for mi_idx, mi in enumerate(move_indices):
+                    vals = -(e_fold[:, mi_idx] * (1 + eps_fold))
+                    order = np.argsort(vals)
+                    sorted_steps = steps[order]
+                    cumsum = np.cumsum(sorted_steps)
+                    scores[fi, mi] = cumsum.max()
+
+        return scores
 
     def apply_move(self, pos: int, step: int, score: float) -> None:
         """Apply the chosen move to the PSSM and update cur_score."""
