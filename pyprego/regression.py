@@ -12,8 +12,8 @@ closely mirrors the R behaviour and can run on any machine.
 from __future__ import annotations
 
 import warnings
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
@@ -23,7 +23,6 @@ from ._fast_encode import encode_sequences_fast
 from .compute import compute_pwm
 from .pssm import consensus_from_pssm, pssm_match
 from .types import (
-    NUCLEOTIDES,
     RegressionResult,
     pssm_dataframe,
     pssm_to_array,
@@ -35,8 +34,8 @@ if TYPE_CHECKING:
 
 # Try importing C extension for fast energy/score computation
 try:
-    from pyprego._pyprego import init_energies as _init_energies_c
     from pyprego._pyprego import choose_best_move as _choose_best_move_c
+    from pyprego._pyprego import init_energies as _init_energies_c
 except (ImportError, AttributeError):
     _init_energies_c = None
     _choose_best_move_c = None
@@ -60,6 +59,7 @@ def _encode_sequences_int(sequences: list[str]) -> np.ndarray:
 # Neighbourhood (perturbation moves) – mirrors init_neighborhood()
 # ──────────────────────────────────────────────────────────────────────
 
+
 def _build_neighbourhood(resolution: float) -> list[list[tuple[int, float]]]:
     """Build the 20 perturbation moves.
 
@@ -69,26 +69,26 @@ def _build_neighbourhood(resolution: float) -> list[list[tuple[int, float]]]:
     A, C, G, T = 0, 1, 2, 3
     r = resolution
     moves: list[list[tuple[int, float]]] = [
-        [(A, r)],           # 0:  A+
-        [(A, -r)],          # 1:  A-
-        [(C, r)],           # 2:  C+
-        [(C, -r)],          # 3:  C-
-        [(G, r)],           # 4:  G+
-        [(G, -r)],          # 5:  G-
-        [(T, r)],           # 6:  T+
-        [(T, -r)],          # 7:  T-
-        [(A, r), (C, r)],   # 8:  AC+
-        [(A, r), (G, r)],   # 9:  AG+
-        [(A, r), (T, r)],   # 10: AT+
-        [(A, -r), (C, -r)], # 11: AC-
-        [(A, -r), (G, -r)], # 12: AG-
-        [(A, -r), (T, -r)], # 13: AT-
-        [(C, r), (G, r)],   # 14: CG+
-        [(C, r), (T, r)],   # 15: CT+
-        [(C, -r), (G, -r)], # 16: CG-
-        [(C, -r), (T, -r)], # 17: CT-
-        [(G, r), (T, r)],   # 18: GT+
-        [(G, -r), (T, -r)], # 19: GT-
+        [(A, r)],  # 0:  A+
+        [(A, -r)],  # 1:  A-
+        [(C, r)],  # 2:  C+
+        [(C, -r)],  # 3:  C-
+        [(G, r)],  # 4:  G+
+        [(G, -r)],  # 5:  G-
+        [(T, r)],  # 6:  T+
+        [(T, -r)],  # 7:  T-
+        [(A, r), (C, r)],  # 8:  AC+
+        [(A, r), (G, r)],  # 9:  AG+
+        [(A, r), (T, r)],  # 10: AT+
+        [(A, -r), (C, -r)],  # 11: AC-
+        [(A, -r), (G, -r)],  # 12: AG-
+        [(A, -r), (T, -r)],  # 13: AT-
+        [(C, r), (G, r)],  # 14: CG+
+        [(C, r), (T, r)],  # 15: CT+
+        [(C, -r), (G, -r)],  # 16: CG-
+        [(C, -r), (T, -r)],  # 17: CT-
+        [(G, r), (T, r)],  # 18: GT+
+        [(G, -r), (T, -r)],  # 19: GT-
     ]
     return moves
 
@@ -96,6 +96,7 @@ def _build_neighbourhood(resolution: float) -> list[list[tuple[int, float]]]:
 # ──────────────────────────────────────────────────────────────────────
 # Spatial helpers
 # ──────────────────────────────────────────────────────────────────────
+
 
 def _calc_spat_min_max(
     spat_num_bins: int,
@@ -143,6 +144,7 @@ def _calculate_bins(
 # ──────────────────────────────────────────────────────────────────────
 # Core regression engine
 # ──────────────────────────────────────────────────────────────────────
+
 
 class _PWMLRegression:
     """Pure-Python port of the C++ PWMLRegression class.
@@ -354,11 +356,15 @@ class _PWMLRegression:
         spat_derivs = np.ascontiguousarray(self.spat_derivs, dtype=np.float64)
 
         _init_energies_c(
-            encoded, nuc_factors, spat_factors, train_mask,
+            encoded,
+            nuc_factors,
+            spat_factors,
+            train_mask,
             self.spat_bin_size,
             int(self.bidirect),
             int(self.symmetrize_spat),
-            derivs, spat_derivs,
+            derivs,
+            spat_derivs,
         )
 
         # If arrays were copied (not the same object), write back
@@ -605,19 +611,17 @@ class _PWMLRegression:
         """Compute score using the configured metric."""
         if self.score_metric == "r2":
             return self.compute_cur_r2(pos, probs)
-        elif self.score_metric == "ks":
+        if self.score_metric == "ks":
             return self.compute_cur_ks(pos, probs)
-        else:
-            raise ValueError(f"Unknown score metric: {self.score_metric}")
+        raise ValueError(f"Unknown score metric: {self.score_metric}")
 
     def compute_cur_fold_score(self, pos: int, probs: np.ndarray, fold: int) -> float:
         """Compute fold score using the configured metric."""
         if self.score_metric == "r2":
             return self.compute_cur_r2_fold(pos, probs, fold)
-        elif self.score_metric == "ks":
+        if self.score_metric == "ks":
             return self.compute_cur_ks_fold(pos, probs, fold)
-        else:
-            raise ValueError(f"Unknown score metric: {self.score_metric}")
+        raise ValueError(f"Unknown score metric: {self.score_metric}")
 
     # ── Spatial score computation ─────────────────────────────────────
 
@@ -625,10 +629,9 @@ class _PWMLRegression:
         """Compute score based on spatial derivatives and current spatial factors."""
         if self.score_metric == "r2":
             return self._compute_cur_r2_spat()
-        elif self.score_metric == "ks":
+        if self.score_metric == "ks":
             return self._compute_cur_ks_spat()
-        else:
-            raise ValueError(f"Unknown score metric: {self.score_metric}")
+        raise ValueError(f"Unknown score metric: {self.score_metric}")
 
     def _compute_cur_r2_spat(self) -> float:
         """Compute R2 using spatial derivatives."""
@@ -745,11 +748,24 @@ class _PWMLRegression:
             data_var_fold = self.data_var.reshape(1, -1).copy()
 
         best_pos, best_step, fold_scores = _choose_best_move_c(
-            derivs, nuc_factors, response, train_mask,
-            folds, fold_sizes, data_avg_fold, data_var_fold,
-            data_epsilon, neigh_nuc_indices, neigh_deltas, neigh_sizes,
-            self.min_prob, self.motif_len, self.num_folds, self.rdim,
-            int(self.log_energy), self.energy_epsilon,
+            derivs,
+            nuc_factors,
+            response,
+            train_mask,
+            folds,
+            fold_sizes,
+            data_avg_fold,
+            data_var_fold,
+            data_epsilon,
+            neigh_nuc_indices,
+            neigh_deltas,
+            neigh_sizes,
+            self.min_prob,
+            self.motif_len,
+            self.num_folds,
+            self.rdim,
+            int(self.log_energy),
+            self.energy_epsilon,
             self.score_metric,
         )
 
@@ -783,13 +799,9 @@ class _PWMLRegression:
 
         # ── Batch-compute energies for all moves ──
         if self.score_metric == "r2":
-            scores = self._choose_best_move_r2_batch(
-                all_probs, steps_pos, n_moves
-            )
+            scores = self._choose_best_move_r2_batch(all_probs, steps_pos, n_moves)
         else:
-            scores = self._choose_best_move_ks_batch(
-                all_probs, steps_pos, n_moves
-            )
+            scores = self._choose_best_move_ks_batch(all_probs, steps_pos, n_moves)
 
         # Rank within each fold
         ranks = np.zeros((self.num_folds, n_moves), dtype=int)
@@ -810,9 +822,7 @@ class _PWMLRegression:
 
         return best_pos, best_step, best_score
 
-    def _choose_best_move_r2_batch(
-        self, all_probs: np.ndarray, steps_pos: np.ndarray, n_moves: int
-    ) -> np.ndarray:
+    def _choose_best_move_r2_batch(self, all_probs: np.ndarray, steps_pos: np.ndarray, n_moves: int) -> np.ndarray:
         """Batch R2 computation for all candidate moves."""
         mask = self.train_mask
         n_train = self.train_n
@@ -849,22 +859,20 @@ class _PWMLRegression:
 
                 e_fold = energies[fold_mask]  # (fold_n, n_moves_at_pos)
                 ex = e_fold.sum(axis=0) / fold_n
-                ex2 = (e_fold ** 2).sum(axis=0) / fold_n
-                pred_var = ex2 - ex ** 2
+                ex2 = (e_fold**2).sum(axis=0) / fold_n
+                pred_var = ex2 - ex**2
 
                 for rd in range(self.rdim):
                     resp_fold = self.response[fold_mask, rd]  # (fold_n,)
                     xy = (e_fold * resp_fold[:, None]).sum(axis=0) / fold_n
                     cov = xy - ex * fold_avg[rd]
                     denom = pred_var * fold_var[rd]
-                    r2 = np.where(denom > 0, cov ** 2 / denom, 0.0)
+                    r2 = np.where(denom > 0, cov**2 / denom, 0.0)
                     scores[fi, move_indices] += r2
 
         return scores
 
-    def _choose_best_move_ks_batch(
-        self, all_probs: np.ndarray, steps_pos: np.ndarray, n_moves: int
-    ) -> np.ndarray:
+    def _choose_best_move_ks_batch(self, all_probs: np.ndarray, steps_pos: np.ndarray, n_moves: int) -> np.ndarray:
         """Batch KS computation for all candidate moves."""
         mask = self.train_mask
         scores = np.zeros((self.num_folds, n_moves))
@@ -967,11 +975,10 @@ class _PWMLRegression:
 
         if best_spat_score > self.cur_score:
             if self.verbose:
-                print(f"  spat update bin={best_spat_bin} diff={best_spat_diff:.4f} "
-                      f"score={best_spat_score:.6f}")
+                print(f"  spat update bin={best_spat_bin} diff={best_spat_diff:.4f} score={best_spat_score:.6f}")
             self.spat_factors[best_spat_bin] += best_spat_diff
             # Normalise
-            self.spat_factors /= (1 + best_spat_diff)
+            self.spat_factors /= 1 + best_spat_diff
             self.cur_score = best_spat_score
 
     # ── Main optimisation loop ────────────────────────────────────────
@@ -1002,8 +1009,7 @@ class _PWMLRegression:
                     self.optimize_spatial_factors()
 
                 if self.verbose:
-                    print(f"  step {self.step_num}: prev={prev_score:.6f} "
-                          f"cur={self.cur_score:.6f}")
+                    print(f"  step {self.step_num}: prev={prev_score:.6f} cur={self.cur_score:.6f}")
 
                 self.step_num += 1
 
@@ -1028,6 +1034,7 @@ class _PWMLRegression:
 # ──────────────────────────────────────────────────────────────────────
 # Public API
 # ──────────────────────────────────────────────────────────────────────
+
 
 def regress_pwm_core(
     sequences: list[str] | np.ndarray,
@@ -1270,11 +1277,11 @@ def regress_pwm_core(
             r2_vals = []
             for rd in range(response.shape[1]):
                 corr = np.corrcoef(pred, response[:, rd])[0, 1]
-                r2_vals.append(corr ** 2 if not np.isnan(corr) else 0.0)
+                r2_vals.append(corr**2 if not np.isnan(corr) else 0.0)
             r2_val = r2_vals[0] if len(r2_vals) == 1 else r2_vals
         else:
             corr = np.corrcoef(pred, response)[0, 1]
-            r2_val = corr ** 2 if not np.isnan(corr) else 0.0
+            r2_val = corr**2 if not np.isnan(corr) else 0.0
 
     if score_metric == "ks" or (response.shape[1] == 1 and set(np.unique(response[:, 0])).issubset({0.0, 1.0})):
         # Compute KS statistic
@@ -1282,6 +1289,7 @@ def regress_pwm_core(
         mask0 = response[:, 0] == 0
         if mask1.any() and mask0.any():
             from scipy import stats
+
             ks_result = stats.ks_2samp(pred[mask1], pred[mask0], alternative="less")
             ks_val = float(ks_result.statistic)
 
@@ -1354,18 +1362,16 @@ def _score_predictions(
             ks_result = sp_stats.ks_2samp(pred[mask1], pred[mask0], alternative=alternative)
             return float(ks_result.statistic)
         return 0.0
-    elif metric == "r2":
+    if metric == "r2":
         if response.ndim == 2 and response.shape[1] > 1:
             r2s = []
             for rd in range(response.shape[1]):
                 c = np.corrcoef(pred, response[:, rd])[0, 1]
-                r2s.append(c ** 2 if not np.isnan(c) else 0.0)
+                r2s.append(c**2 if not np.isnan(c) else 0.0)
             return float(np.mean(r2s))
-        else:
-            c = np.corrcoef(pred, resp)[0, 1]
-            return float(c ** 2) if not np.isnan(c) else 0.0
-    else:
-        raise ValueError(f"Unknown metric {metric!r}")
+        c = np.corrcoef(pred, resp)[0, 1]
+        return float(c**2) if not np.isnan(c) else 0.0
+    raise ValueError(f"Unknown metric {metric!r}")
 
 
 def _sample_response(
@@ -1391,10 +1397,9 @@ def _sample_response(
         chosen_1 = rng.choice(idx_1, size=min(n1, len(idx_1)), replace=False)
         chosen_0 = rng.choice(idx_0, size=min(n0, len(idx_0)), replace=False)
         return np.sort(np.concatenate([chosen_0, chosen_1]))
-    else:
-        frac = sample_frac if sample_frac is not None else 0.1
-        k = max(1, int(n * frac))
-        return np.sort(rng.choice(n, size=k, replace=False))
+    frac = sample_frac if sample_frac is not None else 0.1
+    k = max(1, int(n * frac))
+    return np.sort(rng.choice(n, size=k, replace=False))
 
 
 def _pred_r_given_e(e: np.ndarray, r: np.ndarray, k: int = 100) -> np.ndarray:
@@ -1435,7 +1440,8 @@ def _get_cand_kmers(
     all_dfs = []
     for kl in kmer_length:
         df = screen_kmers(
-            sequences, response,
+            sequences,
+            response,
             kmer_len=kl,
             min_gap=min_gap,
             max_gap=max_gap,
@@ -1449,7 +1455,8 @@ def _get_cand_kmers(
         # Try with halved threshold
         for kl in kmer_length:
             df = screen_kmers(
-                sequences, response,
+                sequences,
+                response,
                 kmer_len=kl,
                 min_gap=min_gap,
                 max_gap=max_gap,
@@ -1710,8 +1717,7 @@ def regress_pwm(
                 result.db_match_motif = str(best_row["motif"])
                 result.db_match_cor = float(best_row.get("cor", 0.0))
                 if verbose:
-                    print(f"Best DB match: {result.db_match_motif} "
-                          f"(cor={result.db_match_cor:.3f})")
+                    print(f"Best DB match: {result.db_match_motif} (cor={result.db_match_cor:.3f})")
         except Exception:
             if verbose:
                 print("Database matching failed")
@@ -1749,7 +1755,8 @@ def _regress_pwm_with_kmer_screen(
 
     kl = kmer_length if isinstance(kmer_length, int) else kmer_length[0]
     kmers_df = screen_kmers(
-        seq_s, resp_s,
+        seq_s,
+        resp_s,
         kmer_len=kl,
         min_gap=min_gap,
         max_gap=max_gap,
@@ -1761,7 +1768,8 @@ def _regress_pwm_with_kmer_screen(
     else:
         # Try lower threshold
         kmers_df = screen_kmers(
-            seq_s, resp_s,
+            seq_s,
+            resp_s,
             kmer_len=kl,
             min_gap=min_gap,
             max_gap=max_gap,
@@ -1829,7 +1837,8 @@ def _regress_pwm_multi_kmers(
 
     # Get candidate k-mers
     cand_kmers = _get_cand_kmers(
-        seq_s, resp_s,
+        seq_s,
+        resp_s,
         kmer_length=kmer_length,
         min_gap=min_gap,
         max_gap=max_gap,
@@ -1847,7 +1856,8 @@ def _regress_pwm_multi_kmers(
     for kmer in cand_kmers:
         try:
             res = regress_pwm_core(
-                seq_train, resp_train,
+                seq_train,
+                resp_train,
                 motif=kmer,
                 **core_kwargs,
             )
@@ -2011,9 +2021,12 @@ def regress_multiple_motifs(
         # Regress on residuals (always use r2 for residuals)
         kwargs_residual = {k: v for k, v in kwargs.items() if k != "score_metric" and k != "final_metric"}
         res = regress_pwm(
-            sequences, residual,
-            score_metric="r2", final_metric="r2",
-            verbose=verbose, alternative=alternative,
+            sequences,
+            residual,
+            score_metric="r2",
+            final_metric="r2",
+            verbose=verbose,
+            alternative=alternative,
             **kwargs_residual,
         )
         models.append(res)
@@ -2036,14 +2049,16 @@ def regress_multiple_motifs(
             print(f"  Score: {score_i:.4f}, Combined: {comb_score_i:.4f}")
 
     # Build stats
-    stats = pd.DataFrame({
-        "model": list(range(1, motif_num + 1)),
-        "score": scores,
-        "comb_score": comb_scores,
-        "diff": [np.nan] + [comb_scores[i] - comb_scores[i - 1] for i in range(1, motif_num)],
-        "consensus": [m.consensus for m in models],
-        "seed_motif": [m.seed_motif for m in models],
-    })
+    stats = pd.DataFrame(
+        {
+            "model": list(range(1, motif_num + 1)),
+            "score": scores,
+            "comb_score": comb_scores,
+            "diff": [np.nan] + [comb_scores[i] - comb_scores[i - 1] for i in range(1, motif_num)],
+            "consensus": [m.consensus for m in models],
+            "seed_motif": [m.seed_motif for m in models],
+        }
+    )
 
     # Final combined model
     E = np.column_stack(energies)
@@ -2157,7 +2172,8 @@ def regress_pwm_clusters(
         kw.setdefault("final_metric", "ks")
 
         res = regress_pwm(
-            sequences, binary_resp,
+            sequences,
+            binary_resp,
             verbose=verbose,
             alternative=alternative,
             **kw,
@@ -2165,13 +2181,15 @@ def regress_pwm_clusters(
         models[str(cname)] = res
         pred_mat[:, ci] = res.pred
 
-        stats_rows.append({
-            "cluster": str(cname),
-            "consensus": res.consensus,
-            "ks_D": res.ks if res.ks is not None else np.nan,
-            "r2": res.r2 if res.r2 is not None else np.nan,
-            "seed_motif": res.seed_motif,
-        })
+        stats_rows.append(
+            {
+                "cluster": str(cname),
+                "consensus": res.consensus,
+                "ks_D": res.ks if res.ks is not None else np.nan,
+                "r2": res.r2 if res.r2 is not None else np.nan,
+                "seed_motif": res.seed_motif,
+            }
+        )
 
     stats = pd.DataFrame(stats_rows)
 
@@ -2320,7 +2338,8 @@ def regress_pwm_cv(
         test_resp = response[test_mask]
 
         res = regress_pwm(
-            train_seqs, train_resp,
+            train_seqs,
+            train_resp,
             seed=seed,
             verbose=verbose,
             alternative=alternative,
@@ -2343,7 +2362,8 @@ def regress_pwm_cv(
     full_model = None
     if add_full_model:
         full_model = regress_pwm(
-            sequences, response,
+            sequences,
+            response,
             seed=seed,
             verbose=verbose,
             alternative=alternative,

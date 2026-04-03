@@ -4,8 +4,8 @@
 
 | Branch | Purpose | Remote |
 |--------|---------|--------|
-| `dev` | Active development. All work happens here. | TBD |
-| `main` | Clean release history. One squash commit per release. | TBD |
+| `dev` | Active development. All work happens here. | `private` (aviezerl/pyprego) |
+| `main` | Clean release history. One squash commit per release. | `origin` (tanaylab/pyprego) |
 
 ### Rules
 
@@ -14,11 +14,22 @@
 - **Tags live on `main`.** Version tags (`v0.0.1`, `v0.0.2`, ...) are created on `main` after the squash commit.
 - **Never add AI attribution to commits.** No `Co-authored-by` or similar AI-referencing trailers.
 
+### Shipping (dev → main)
+
+```bash
+dev/skills/pyprego-ship/ship.sh                      # dry run
+dev/skills/pyprego-ship/ship.sh "v0.0.1: summary"    # commit only  
+dev/skills/pyprego-ship/ship.sh "v0.0.1: summary" --push  # full ship
+```
+
 ### Dev-only paths (MUST NOT appear on `main`)
 
 - `CLAUDE.md`
 - `AGENTS.md`
+- `DECISIONS.md`
+- `PROGRESS.md`
 - `dev/` (if created)
+- `.a5c/`
 
 ## Testing
 
@@ -41,9 +52,10 @@ See `DECISIONS.md` for detailed architecture decisions.
 
 ## Key Performance Notes
 
-- `init_energies()` in regression.py is vectorized with NumPy (~0.02s for 200 seqs)
-- The `screen_kmers` function can be slow for large k-mer counts (pure Python correlation loop)
-- Future: consider Numba JIT or C extension for screen_kmers inner loop
+- C extension (`_pyprego`) accelerates `init_energies`, `kmer_matrix`, and `choose_best_move`
+- Performance matches or beats R/C++ across all operations
+- Pure Python/NumPy fallback when C extension is not compiled
+- Build C extension: `pip install -e .`
 
 ## Related Packages
 

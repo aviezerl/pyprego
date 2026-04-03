@@ -51,6 +51,10 @@ dev = [
     "mypy",
     "logomaker>=0.8",
 ]
+docs = [
+    "mkdocs-material>=9.0",
+    "mkdocstrings[python]>=0.24",
+]
 all = [
     "pymisha>=0.1",
     "logomaker>=0.8",

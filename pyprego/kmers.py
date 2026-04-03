@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 
 from ._fast_encode import encode_sequences_fast
-from .types import NUCLEOTIDES, pssm_dataframe, pssm_to_array
+from .types import NUCLEOTIDES, pssm_to_array
 
 if TYPE_CHECKING:
     pass
@@ -177,10 +177,7 @@ def kmer_matrix(
     # ── Try fast C extension path ──
     # When kmers is an integer (generate all k-mers of that length),
     # the C extension can handle the complete pipeline.
-    if (
-        _kmer_matrix_c is not None
-        and isinstance(kmers, (int, np.integer))
-    ):
+    if _kmer_matrix_c is not None and isinstance(kmers, (int, np.integer)):
         k_int = int(kmers)
         seq_list = [
             s.upper() if isinstance(s, str) else str(s)
@@ -210,9 +207,7 @@ def kmer_matrix(
     kmer_to_idx = {km: i for i, km in enumerate(kmer_list)}
 
     # Encode sequences once
-    encoded = encode_sequences_fast(
-        [s.upper() if isinstance(s, str) else s for s in sequences]
-    )
+    encoded = encode_sequences_fast([s.upper() if isinstance(s, str) else s for s in sequences])
 
     counts = np.zeros((n_seqs, n_kmers), dtype=np.int32)
 
@@ -342,9 +337,7 @@ def screen_kmers(
 
     n_seqs = len(sequences)
     if response.shape[0] != n_seqs:
-        raise ValueError(
-            f"Number of sequences ({n_seqs}) != number of response rows ({response.shape[0]})"
-        )
+        raise ValueError(f"Number of sequences ({n_seqs}) != number of response rows ({response.shape[0]})")
 
     n_resp = response.shape[1]
 
@@ -362,32 +355,32 @@ def screen_kmers(
     n_km = counts.shape[1]
 
     # ── Vectorized statistics and correlations ──
-    avg_n = counts.mean(axis=0)       # (n_km,)
-    avg_var = counts.var(axis=0)      # (n_km,)
+    avg_n = counts.mean(axis=0)  # (n_km,)
+    avg_var = counts.var(axis=0)  # (n_km,)
 
     resp_mean = response.mean(axis=0)  # (n_resp,)
-    resp_var = response.var(axis=0)    # (n_resp,)
+    resp_var = response.var(axis=0)  # (n_resp,)
 
     # Center counts and response
-    counts_centered = counts - avg_n[None, :]     # (N, n_km)
+    counts_centered = counts - avg_n[None, :]  # (N, n_km)
     resp_centered = response - resp_mean[None, :]  # (N, n_resp)
 
     # Covariance matrix: (n_km, n_resp) via matrix multiply
     cov_matrix = (counts_centered.T @ resp_centered) / n_seqs  # (n_km, n_resp)
 
     # Standard deviations
-    counts_std = np.sqrt(avg_var)   # (n_km,)
-    resp_std = np.sqrt(resp_var)    # (n_resp,)
+    counts_std = np.sqrt(avg_var)  # (n_km,)
+    resp_std = np.sqrt(resp_var)  # (n_resp,)
 
     # Pearson r = cov / (std_x * std_y), handle zero-variance
     denom = np.outer(counts_std, resp_std)  # (n_km, n_resp)
     safe_denom = np.where(denom > 1e-15, denom, 1.0)
-    r_matrix = cov_matrix / safe_denom      # (n_km, n_resp)
+    r_matrix = cov_matrix / safe_denom  # (n_km, n_resp)
     r_matrix[denom < 1e-15] = 0.0
 
     # R-squared and max across response columns
-    r2_matrix = r_matrix ** 2               # (n_km, n_resp)
-    max_r2 = r2_matrix.max(axis=1)          # (n_km,)
+    r2_matrix = r_matrix**2  # (n_km, n_resp)
+    max_r2 = r2_matrix.max(axis=1)  # (n_km,)
 
     # Filter by min_cor and zero variance
     valid = avg_var >= 1e-15
@@ -532,7 +525,7 @@ def pssm_to_kmer(
     if kmer_length is None:
         kmer_length = L
 
-    if L < kmer_length:
+    if kmer_length > L:
         raise ValueError(f"PSSM has {L} rows but kmer_length is {kmer_length}")
 
     # Compute bits per position (with prior)
@@ -544,7 +537,7 @@ def pssm_to_kmer(
     bits = np.nan_to_num(bits, nan=0.0)
 
     # Rolling sum to find best window
-    if L == kmer_length:
+    if kmer_length == L:
         best_pos = 0
     else:
         rollsum = np.convolve(bits, np.ones(kmer_length), mode="valid")
@@ -566,9 +559,6 @@ def pssm_to_kmer(
         window_bits = 2.0 - window_entropy
         window_bits = np.nan_to_num(window_bits, nan=0.0)
 
-        kmer_chars = [
-            c if window_bits[i] > pos_bits_thresh else "N"
-            for i, c in enumerate(kmer_chars)
-        ]
+        kmer_chars = [c if window_bits[i] > pos_bits_thresh else "N" for i, c in enumerate(kmer_chars)]
 
     return "".join(kmer_chars)
