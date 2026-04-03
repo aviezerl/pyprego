@@ -189,10 +189,7 @@ def gextract_pwm_quantile(
     import pymisha as pm
 
     # Determine interval size
-    if size is not None:
-        interval_size = size
-    else:
-        interval_size = int((intervals["end"] - intervals["start"]).iloc[0])
+    interval_size = size if size is not None else int((intervals["end"] - intervals["start"]).iloc[0])
 
     # Score the input intervals
     scores = gextract_pwm(
@@ -223,8 +220,7 @@ def gextract_pwm_quantile(
     bg_quantile_values = np.nanquantile(bg_scores, quantiles_arr)
 
     # Map each input score to its quantile via interpolation
-    result = np.interp(scores, bg_quantile_values, quantiles_arr)
-    return result
+    return np.interp(scores, bg_quantile_values, quantiles_arr)
 
 
 def gextract_local_pwm(

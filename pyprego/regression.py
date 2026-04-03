@@ -376,7 +376,6 @@ class _PWMLRegression:
     def _init_energies_numpy(self) -> None:
         """Vectorised NumPy implementation of init_energies."""
         K = self.motif_len
-        n_seq = self.n_seq
         L = self.encoded.shape[1]
         num_wins = L - K + 1
 
@@ -489,8 +488,7 @@ class _PWMLRegression:
         # derivs[:, pos, :] has shape (n_seq, 4)
         # probs has shape (4,)
         energies = self.derivs[:, pos, :] @ probs  # (n_seq,)
-        energies = np.where(mask, energies, 0.0)
-        return energies
+        return np.where(mask, energies, 0.0)
 
     def _apply_log_energy(self, energies: np.ndarray) -> np.ndarray:
         """Apply log transform if enabled."""
@@ -711,7 +709,6 @@ class _PWMLRegression:
 
     def _choose_best_move_c_wrapper(self) -> tuple[int, int, float]:
         """C extension implementation of choose_best_move."""
-        K = self.motif_len
         neigh_size = len(self._cur_neigh)
 
         # Pack neighbourhood into arrays for C extension
@@ -890,10 +887,7 @@ class _PWMLRegression:
             resp = self.response[:, 0]
 
             for fi in range(self.num_folds):
-                if self.num_folds == 1:
-                    fold_mask = mask
-                else:
-                    fold_mask = mask & (self.folds == fi)
+                fold_mask = mask if self.num_folds == 1 else mask & (self.folds == fi)
 
                 e_fold = energies[fold_mask]  # (fold_n, n_at_pos)
                 resp_fold = resp[fold_mask]
@@ -1270,7 +1264,7 @@ def regress_pwm_core(
     # Compute R2 / KS on predictions
     r2_val = None
     ks_val = None
-    flat_resp = response[:, 0] if response.shape[1] == 1 else response
+    response[:, 0] if response.shape[1] == 1 else response
     if score_metric == "r2" or response.shape[1] > 1:
         # Compute R2 for each response dimension
         if response.ndim == 2:
@@ -1640,34 +1634,34 @@ def regress_pwm(
         final_metric = "ks" if _is_binary_response(response) else "r2"
 
     # Core optimizer kwargs (passed to regress_pwm_core)
-    core_kwargs = dict(
-        motif_length=motif_length,
-        score_metric=score_metric,
-        bidirect=bidirect,
-        spat_bin_size=spat_bin_size,
-        spat_num_bins=spat_num_bins,
-        spat_model=spat_model,
-        improve_epsilon=improve_epsilon,
-        min_nuc_prob=min_nuc_prob,
-        unif_prior=unif_prior,
-        num_folds=num_folds,
-        resolutions=resolutions,
-        spat_resolutions=spat_resolutions,
-        log_energy=log_energy,
-        energy_epsilon=energy_epsilon,
-        optimize_pwm=optimize_pwm,
-        optimize_spat=optimize_spat,
-        symmetrize_spat=symmetrize_spat,
-        seed=seed,
-        consensus_single_thresh=consensus_single_thresh,
-        consensus_double_thresh=consensus_double_thresh,
-        verbose=verbose,
-    )
+    core_kwargs = {
+        "motif_length": motif_length,
+        "score_metric": score_metric,
+        "bidirect": bidirect,
+        "spat_bin_size": spat_bin_size,
+        "spat_num_bins": spat_num_bins,
+        "spat_model": spat_model,
+        "improve_epsilon": improve_epsilon,
+        "min_nuc_prob": min_nuc_prob,
+        "unif_prior": unif_prior,
+        "num_folds": num_folds,
+        "resolutions": resolutions,
+        "spat_resolutions": spat_resolutions,
+        "log_energy": log_energy,
+        "energy_epsilon": energy_epsilon,
+        "optimize_pwm": optimize_pwm,
+        "optimize_spat": optimize_spat,
+        "symmetrize_spat": symmetrize_spat,
+        "seed": seed,
+        "consensus_single_thresh": consensus_single_thresh,
+        "consensus_double_thresh": consensus_double_thresh,
+        "verbose": verbose,
+    }
 
     # If motif is already provided (string or DataFrame), skip k-mer screening
     if motif is not None:
         if multi_kmers and verbose:
-            warnings.warn("Motif is provided, multi_kmers will be ignored")
+            warnings.warn("Motif is provided, multi_kmers will be ignored", stacklevel=2)
         result = regress_pwm_core(sequences, response, motif=motif, **core_kwargs)
     elif multi_kmers:
         # Multi-kmer mode
@@ -1786,8 +1780,7 @@ def _regress_pwm_with_kmer_screen(
     if verbose:
         print(f"Best k-mer: {best_kmer}")
 
-    result = regress_pwm_core(sequences, response, motif=best_kmer, **core_kwargs)
-    return result
+    return regress_pwm_core(sequences, response, motif=best_kmer, **core_kwargs)
 
 
 def _regress_pwm_multi_kmers(
@@ -1876,8 +1869,7 @@ def _regress_pwm_multi_kmers(
         print(f"Best k-mer: {best_kmer} (val_score={best_val_score:.4f})")
 
     # Re-run on full data with the best kmer
-    result = regress_pwm_core(sequences, response, motif=best_kmer, **core_kwargs)
-    return result
+    return regress_pwm_core(sequences, response, motif=best_kmer, **core_kwargs)
 
 
 # ──────────────────────────────────────────────────────────────────────

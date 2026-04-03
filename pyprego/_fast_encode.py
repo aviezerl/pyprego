@@ -42,5 +42,4 @@ def encode_sequences_fast(sequences: list[str] | np.ndarray) -> np.ndarray:
     # Join all sequences into one big string, convert to bytes, then reshape
     big_str = "".join(sequences)
     byte_arr = np.frombuffer(big_str.encode("ascii"), dtype=np.uint8)
-    encoded = _BYTE_TO_IDX[byte_arr].reshape(n, L)
-    return encoded
+    return _BYTE_TO_IDX[byte_arr].reshape(n, L)

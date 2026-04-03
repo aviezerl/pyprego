@@ -375,7 +375,7 @@ def create_motif_db(
 
     # Replace -inf (from log(0)) with 0 -- matching R behaviour
     # where positions beyond motif length are zeroed out
-    D = forward_mat.shape[0] // 4
+    forward_mat.shape[0] // 4
     for i, name in enumerate(motif_names):
         ml = motif_lengths[name]
         if ml * 4 < forward_mat.shape[0]:
@@ -432,7 +432,7 @@ def motif_db_to_dataframe(db: MotifDB) -> pd.DataFrame:
     prob_mat = np.exp(db.mat)
 
     motif_names = db.names()
-    D = db.mat.shape[0] // 4
+    db.mat.shape[0] // 4
 
     rows: list[dict] = []
     for col_idx, name in enumerate(motif_names):
@@ -747,10 +747,7 @@ def all_motif_datasets(
         ``C``, ``G``, ``T``, ``dataset``, ``motif_orig``.
     """
     if data_dir is None:
-        if _DATA_DIR.exists():
-            data_dir = _DATA_DIR
-        else:
-            data_dir = Path("/tmp")
+        data_dir = _DATA_DIR if _DATA_DIR.exists() else Path("/tmp")
 
     data_dir = Path(data_dir)
 

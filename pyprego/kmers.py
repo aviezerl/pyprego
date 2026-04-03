@@ -189,10 +189,7 @@ def kmer_matrix(
         except Exception:
             pass  # fall through to Python implementation
 
-    if isinstance(kmers, (int, np.integer)):
-        kmer_list = generate_kmers(int(kmers), max_gap=max_gap)
-    else:
-        kmer_list = list(kmers)
+    kmer_list = generate_kmers(int(kmers), max_gap=max_gap) if isinstance(kmers, (int, np.integer)) else list(kmers)
 
     if len(kmer_list) == 0:
         return pd.DataFrame(index=range(len(sequences)))
@@ -352,7 +349,7 @@ def screen_kmers(
         kmer_list = list(km_df.columns)
 
     counts = km_df.to_numpy(dtype=np.float64)
-    n_km = counts.shape[1]
+    counts.shape[1]
 
     # ── Vectorized statistics and correlations ──
     avg_n = counts.mean(axis=0)  # (n_km,)
@@ -404,8 +401,7 @@ def screen_kmers(
         result_data[resp_names[ri]] = r_matrix[valid_idx, ri]
 
     df = pd.DataFrame(result_data)
-    df = df.sort_values("max_r2", ascending=False).reset_index(drop=True)
-    return df
+    return df.sort_values("max_r2", ascending=False).reset_index(drop=True)
 
 
 def kmers_to_pssm(
@@ -438,10 +434,7 @@ def kmers_to_pssm(
     ValueError
         If k-mer contains invalid characters.
     """
-    if isinstance(kmer, str):
-        kmer_list = [kmer]
-    else:
-        kmer_list = list(kmer)
+    kmer_list = [kmer] if isinstance(kmer, str) else list(kmer)
 
     # Validate
     for km in kmer_list:

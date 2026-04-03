@@ -525,10 +525,9 @@ def plot_regression_qc_multi(
     )
     fig.suptitle(title, fontsize=13, fontweight="bold", y=1.01)
 
-    if n_models == 1:
-        # axes shape is (n_rows, n_cols) -- ensure 2D
-        if axes.ndim == 1:
-            axes = axes.reshape(n_rows, n_cols)
+    # axes shape is (n_rows, n_cols) -- ensure 2D
+    if n_models == 1 and axes.ndim == 1:
+        axes = axes.reshape(n_rows, n_cols)
 
     stats = result.multi_stats
 
@@ -573,7 +572,7 @@ def plot_regression_qc_multi(
         width = 0.35
         score_vals = stats["score"].to_numpy()
         bars1 = ax_scores.bar(x - width / 2, score_vals, width, label="Score", color="#4472C4")
-        for bar, val in zip(bars1, score_vals):
+        for bar, val in zip(bars1, score_vals, strict=False):
             ax_scores.text(
                 bar.get_x() + bar.get_width() / 2, bar.get_height(), f"{val:.3f}", ha="center", va="bottom", fontsize=8
             )
@@ -581,7 +580,7 @@ def plot_regression_qc_multi(
         if "comb_score" in stats.columns:
             comb_vals = stats["comb_score"].to_numpy()
             bars2 = ax_scores.bar(x + width / 2, comb_vals, width, label="Combined score", color="#ED7D31")
-            for bar, val in zip(bars2, comb_vals):
+            for bar, val in zip(bars2, comb_vals, strict=False):
                 ax_scores.text(
                     bar.get_x() + bar.get_width() / 2,
                     bar.get_height(),

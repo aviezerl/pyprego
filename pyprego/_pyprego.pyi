@@ -5,4 +5,3 @@ def version() -> str:
 
 class error(Exception):
     """Custom exception raised by _pyprego C extension functions."""
-

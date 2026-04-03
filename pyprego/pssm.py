@@ -391,10 +391,7 @@ def _max_pssm_score(
     # Normalize shorter PSSM with prior
     vec_s = _normalize_with_prior(pssm_s, prior).ravel()
 
-    if method == "kl":
-        best_score = np.inf
-    else:
-        best_score = -1.0
+    best_score = np.inf if method == "kl" else -1.0
 
     for start in range(max_pos - window_size + 1):
         window = pssm_l[start : start + window_size]
@@ -509,10 +506,7 @@ def _pssm_dataset_score(
     if pssm_dict2 is None:
         # Within-set comparison
         n = len(mats1)
-        if method == "kl":
-            result = np.zeros((n, n), dtype=np.float64)
-        else:
-            result = np.zeros((n, n), dtype=np.float64)
+        result = np.zeros((n, n), dtype=np.float64) if method == "kl" else np.zeros((n, n), dtype=np.float64)
         for i in range(n):
             if method == "kl":
                 result[i, i] = 0.0
