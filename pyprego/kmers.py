@@ -18,6 +18,12 @@ from .types import NUCLEOTIDES, pssm_dataframe, pssm_to_array
 if TYPE_CHECKING:
     pass
 
+# Try importing C extension for fast k-mer counting
+try:
+    from pyprego._pyprego import kmer_matrix as _kmer_matrix_c
+except (ImportError, AttributeError):
+    _kmer_matrix_c = None
+
 # Powers of 4 for base-4 integer hashing of k-mers
 _BASE4_CHARS = {"A": 0, "C": 1, "G": 2, "T": 3}
 
@@ -168,6 +174,24 @@ def kmer_matrix(
         DataFrame of shape ``(n_sequences, n_kmers)`` with occurrence counts.
         Columns are the k-mer strings.
     """
+    # ── Try fast C extension path ──
+    # When kmers is an integer (generate all k-mers of that length),
+    # the C extension can handle the complete pipeline.
+    if (
+        _kmer_matrix_c is not None
+        and isinstance(kmers, (int, np.integer))
+    ):
+        k_int = int(kmers)
+        seq_list = [
+            s.upper() if isinstance(s, str) else str(s)
+            for s in (sequences.tolist() if isinstance(sequences, np.ndarray) else sequences)
+        ]
+        try:
+            arr, names = _kmer_matrix_c(seq_list, k_int, max_gap)
+            return pd.DataFrame(arr, columns=names)
+        except Exception:
+            pass  # fall through to Python implementation
+
     if isinstance(kmers, (int, np.integer)):
         kmer_list = generate_kmers(int(kmers), max_gap=max_gap)
     else:

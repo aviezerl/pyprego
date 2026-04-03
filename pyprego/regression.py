@@ -33,6 +33,14 @@ from .types import (
 if TYPE_CHECKING:
     pass
 
+# Try importing C extension for fast energy/score computation
+try:
+    from pyprego._pyprego import init_energies as _init_energies_c
+    from pyprego._pyprego import choose_best_move as _choose_best_move_c
+except (ImportError, AttributeError):
+    _init_energies_c = None
+    _choose_best_move_c = None
+
 # ──────────────────────────────────────────────────────────────────────
 # Nucleotide encoding helpers  (matching the C++ char-based indexing)
 # ──────────────────────────────────────────────────────────────────────
@@ -324,9 +332,43 @@ class _PWMLRegression:
     def init_energies(self) -> None:
         """Compute derivatives for every (sequence, position, nucleotide).
 
-        Vectorised NumPy implementation replacing the pure Python loop.
-        Processes all sequences and window positions simultaneously.
+        Uses the C extension if available, otherwise falls back to
+        vectorised NumPy implementation.
         """
+        if _init_energies_c is not None:
+            self._init_energies_c()
+        else:
+            self._init_energies_numpy()
+
+        if self.symmetrize_spat:
+            self._symmetrize_spat_factors()
+
+    def _init_energies_c(self) -> None:
+        """C extension implementation of init_energies."""
+        # Ensure arrays are C-contiguous and correct dtype
+        encoded = np.ascontiguousarray(self.encoded, dtype=np.int8)
+        nuc_factors = np.ascontiguousarray(self.nuc_factors, dtype=np.float64)
+        spat_factors = np.ascontiguousarray(self.spat_factors, dtype=np.float64)
+        train_mask = np.ascontiguousarray(self.train_mask, dtype=np.bool_)
+        derivs = np.ascontiguousarray(self.derivs, dtype=np.float64)
+        spat_derivs = np.ascontiguousarray(self.spat_derivs, dtype=np.float64)
+
+        _init_energies_c(
+            encoded, nuc_factors, spat_factors, train_mask,
+            self.spat_bin_size,
+            int(self.bidirect),
+            int(self.symmetrize_spat),
+            derivs, spat_derivs,
+        )
+
+        # If arrays were copied (not the same object), write back
+        if derivs is not self.derivs:
+            self.derivs[:] = derivs
+        if spat_derivs is not self.spat_derivs:
+            self.spat_derivs[:] = spat_derivs
+
+    def _init_energies_numpy(self) -> None:
+        """Vectorised NumPy implementation of init_energies."""
         K = self.motif_len
         n_seq = self.n_seq
         L = self.encoded.shape[1]
@@ -421,9 +463,6 @@ class _PWMLRegression:
                 for nuc in range(4):
                     nuc_mask = nucs_at_d == nuc
                     self.derivs[:, pssm_pos, nuc] += (contrib * nuc_mask).sum(axis=1)
-
-        if self.symmetrize_spat:
-            self._symmetrize_spat_factors()
 
     # ── Score computation ─────────────────────────────────────────────
 
@@ -660,9 +699,71 @@ class _PWMLRegression:
     def choose_best_move(self) -> tuple[int, int, float]:
         """Evaluate all (position, move) combinations and pick the best.
 
-        Vectorised: pre-computes all candidate probability vectors, then
-        batch-evaluates energies for all moves at once.
+        Uses vectorised NumPy implementation (which leverages BLAS for
+        the batch matrix multiplies). The C extension is available via
+        _choose_best_move_c_wrapper() but NumPy's batch operations are
+        faster for the typical problem sizes in PWM regression.
         """
+        return self._choose_best_move_numpy()
+
+    def _choose_best_move_c_wrapper(self) -> tuple[int, int, float]:
+        """C extension implementation of choose_best_move."""
+        K = self.motif_len
+        neigh_size = len(self._cur_neigh)
+
+        # Pack neighbourhood into arrays for C extension
+        # Each move has up to 2 (nuc_idx, delta) pairs
+        neigh_nuc_indices = np.zeros((neigh_size, 2), dtype=np.int32)
+        neigh_deltas = np.zeros((neigh_size, 2), dtype=np.float64)
+        neigh_sizes = np.zeros(neigh_size, dtype=np.int32)
+
+        for step_idx, step in enumerate(self._cur_neigh):
+            neigh_sizes[step_idx] = len(step)
+            for pair_idx, (nuc_idx, delta) in enumerate(step):
+                neigh_nuc_indices[step_idx, pair_idx] = nuc_idx
+                neigh_deltas[step_idx, pair_idx] = delta
+
+        # Ensure arrays are C-contiguous
+        derivs = np.ascontiguousarray(self.derivs, dtype=np.float64)
+        nuc_factors = np.ascontiguousarray(self.nuc_factors, dtype=np.float64)
+        response = np.ascontiguousarray(self.response, dtype=np.float64)
+        train_mask = np.ascontiguousarray(self.train_mask, dtype=np.bool_)
+        folds = np.ascontiguousarray(self.folds, dtype=np.int32)
+        fold_sizes = np.ascontiguousarray(self.fold_sizes, dtype=np.int32)
+        data_avg_fold = np.ascontiguousarray(self.data_avg_fold, dtype=np.float64)
+        data_var_fold = np.ascontiguousarray(self.data_var_fold, dtype=np.float64)
+
+        # For KS mode, we need data_epsilon; for R2, pass zeros
+        if self.score_metric == "ks":
+            data_epsilon = np.ascontiguousarray(self.data_epsilon, dtype=np.float64)
+        else:
+            data_epsilon = np.zeros(self.n_seq, dtype=np.float64)
+
+        # Handle single-fold case: use global stats
+        if self.num_folds == 1:
+            data_avg_fold = self.data_avg.reshape(1, -1).copy()
+            data_var_fold = self.data_var.reshape(1, -1).copy()
+
+        best_pos, best_step, fold_scores = _choose_best_move_c(
+            derivs, nuc_factors, response, train_mask,
+            folds, fold_sizes, data_avg_fold, data_var_fold,
+            data_epsilon, neigh_nuc_indices, neigh_deltas, neigh_sizes,
+            self.min_prob, self.motif_len, self.num_folds, self.rdim,
+            int(self.log_energy), self.energy_epsilon,
+            self.score_metric,
+        )
+
+        # Compute the actual score for the best move (using Python for accuracy)
+        probs = self._compute_step_probs(best_pos, best_step)
+        best_score = self.compute_cur_score(best_pos, probs)
+
+        if self.verbose:
+            print(f"  best step={best_step} pos={best_pos} score={best_score:.6f}")
+
+        return best_pos, best_step, best_score
+
+    def _choose_best_move_numpy(self) -> tuple[int, int, float]:
+        """Pure NumPy implementation of choose_best_move."""
         K = self.motif_len
         neigh_size = len(self._cur_neigh)
         n_moves = K * neigh_size
@@ -681,14 +782,6 @@ class _PWMLRegression:
                 idx += 1
 
         # ── Batch-compute energies for all moves ──
-        # For each move m at position p:
-        #   energy[seq] = sum_nuc all_probs[m, nuc] * derivs[seq, p, nuc]
-        # = all_probs[m] @ derivs[seq, p].T
-        #
-        # derivs has shape (n_seq, K, 4)
-        # For move m with position p: energy[seq] = derivs[seq, p, :] @ all_probs[m, :]
-        #
-        # Group moves by position for efficient batch multiply:
         if self.score_metric == "r2":
             scores = self._choose_best_move_r2_batch(
                 all_probs, steps_pos, n_moves
