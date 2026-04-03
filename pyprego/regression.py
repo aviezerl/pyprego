@@ -19,6 +19,7 @@ import numpy as np
 import pandas as pd
 from scipy import stats as sp_stats
 
+from ._fast_encode import encode_sequences_fast
 from .compute import compute_pwm
 from .pssm import consensus_from_pssm, pssm_match
 from .types import (
@@ -40,15 +41,11 @@ _COMPLEMENT_IDX = np.array([3, 2, 1, 0], dtype=np.intp)  # A<->T, C<->G
 
 
 def _encode_sequences_int(sequences: list[str]) -> np.ndarray:
-    """Encode sequences as int8 array (N, L).  0=A, 1=C, 2=G, 3=T, -1=N/*."""
-    n = len(sequences)
-    L = len(sequences[0])
-    arr = np.full((n, L), -1, dtype=np.int8)
-    for i, seq in enumerate(sequences):
-        for j, ch in enumerate(seq):
-            idx = _NUC_TO_IDX.get(ch, -1)
-            arr[i, j] = idx
-    return arr
+    """Encode sequences as int8 array (N, L).  0=A, 1=C, 2=G, 3=T, -1=N/*.
+
+    Uses fast vectorized byte lookup.
+    """
+    return encode_sequences_fast(sequences)
 
 
 # ──────────────────────────────────────────────────────────────────────

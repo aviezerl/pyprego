@@ -12,10 +12,14 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pandas as pd
 
+from ._fast_encode import encode_sequences_fast
 from .types import NUCLEOTIDES, pssm_dataframe, pssm_to_array
 
 if TYPE_CHECKING:
     pass
+
+# Powers of 4 for base-4 integer hashing of k-mers
+_BASE4_CHARS = {"A": 0, "C": 1, "G": 2, "T": 3}
 
 
 def generate_kmers(
@@ -88,6 +92,48 @@ def generate_kmers(
     return list(dict.fromkeys(base_kmers + gap_kmers))
 
 
+def _kmer_to_int(kmer: str) -> int:
+    """Convert a pure (no-N) k-mer string to a base-4 integer."""
+    val = 0
+    for ch in kmer:
+        val = val * 4 + _BASE4_CHARS[ch]
+    return val
+
+
+def _windows_to_ints(encoded: np.ndarray, k: int) -> np.ndarray:
+    """Convert encoded sliding windows to base-4 integers.
+
+    Parameters
+    ----------
+    encoded : np.ndarray
+        Integer-encoded sequences, shape (N, L), values 0-3, -1 for N.
+
+    Returns
+    -------
+    np.ndarray
+        Shape (N, num_windows). Values are base-4 ints for valid windows,
+        -1 for windows containing any N-base.
+    """
+    N, L = encoded.shape
+    num_wins = L - k + 1
+    if num_wins <= 0:
+        return np.empty((N, 0), dtype=np.int64)
+
+    # Sliding window indices: (num_wins, k)
+    win_idx = np.arange(k)[None, :] + np.arange(num_wins)[:, None]
+    windows = encoded[:, win_idx]  # (N, num_wins, k)
+
+    # Mark windows with any invalid base
+    has_invalid = np.any(windows < 0, axis=2)  # (N, num_wins)
+
+    # Compute base-4 integer for each window
+    powers = 4 ** np.arange(k - 1, -1, -1, dtype=np.int64)  # [4^(k-1), ..., 4^0]
+    win_ints = (windows.astype(np.int64) * powers[None, None, :]).sum(axis=2)  # (N, num_wins)
+    win_ints[has_invalid] = -1
+
+    return win_ints
+
+
 def kmer_matrix(
     sequences: list[str] | np.ndarray,
     kmers: list[str] | int,
@@ -127,48 +173,73 @@ def kmer_matrix(
         return pd.DataFrame(index=range(len(sequences)))
 
     k = len(kmer_list[0])
+    n_seqs = len(sequences)
+    n_kmers = len(kmer_list)
 
     # Separate pure k-mers (no N) from gapped k-mers
-    pure_kmers = []
-    gapped_kmers = []
-    for km in kmer_list:
-        if "N" in km:
-            gapped_kmers.append(km)
-        else:
-            pure_kmers.append(km)
-
+    pure_kmers = [km for km in kmer_list if "N" not in km]
+    gapped_kmers = [km for km in kmer_list if "N" in km]
     kmer_to_idx = {km: i for i, km in enumerate(kmer_list)}
-    n_kmers = len(kmer_list)
-    n_seqs = len(sequences)
+
+    # Encode sequences once
+    encoded = encode_sequences_fast(
+        [s.upper() if isinstance(s, str) else s for s in sequences]
+    )
 
     counts = np.zeros((n_seqs, n_kmers), dtype=np.int32)
 
-    # Build regex patterns for gapped k-mers (N matches any nucleotide)
-    gapped_patterns: list[tuple[re.Pattern[str], int]] | None = None
+    # ── Pure k-mers: vectorized base-4 hashing ──
+    if pure_kmers:
+        # Convert each pure k-mer to its base-4 integer and map to column index
+        max_int = 4**k
+        int_to_col = np.full(max_int, -1, dtype=np.int32)
+        for km in pure_kmers:
+            int_to_col[_kmer_to_int(km)] = kmer_to_idx[km]
+
+        # Convert all sliding windows to base-4 ints
+        win_ints = _windows_to_ints(encoded, k)  # (N, num_wins)
+
+        # Count: for each sequence, use bincount on valid window ints
+        for i in range(n_seqs):
+            row = win_ints[i]
+            valid = row[row >= 0]
+            if len(valid) == 0:
+                continue
+            bc = np.bincount(valid, minlength=max_int)
+            # Map to k-mer columns
+            active = np.where((int_to_col >= 0) & (bc > 0))[0]
+            for idx in active:
+                counts[i, int_to_col[idx]] = bc[idx]
+
+    # ── Gapped k-mers: vectorized mask-based matching ──
     if gapped_kmers:
-        gapped_patterns = []
-        for km in gapped_kmers:
-            # Build regex: replace N with [ACGT], other chars literal
-            pat = "".join("[ACGT]" if c == "N" else c for c in km)
-            gapped_patterns.append((re.compile(pat), kmer_to_idx[km]))
+        N_seq, L = encoded.shape
+        num_wins = L - k + 1
+        if num_wins > 0:
+            # Sliding window indices
+            win_idx = np.arange(k)[None, :] + np.arange(num_wins)[:, None]
+            windows = encoded[:, win_idx]  # (N, num_wins, k)
 
-    pure_kmer_set = {km: kmer_to_idx[km] for km in pure_kmers}
+            for km in gapped_kmers:
+                col_idx = kmer_to_idx[km]
+                # Build mask: which positions in the k-mer are fixed (not N)
+                fixed_positions = []
+                fixed_values = []
+                for pos_i, ch in enumerate(km):
+                    if ch != "N":
+                        fixed_positions.append(pos_i)
+                        fixed_values.append(_BASE4_CHARS[ch])
 
-    for i, seq in enumerate(sequences):
-        seq = seq.upper()
-        for j in range(len(seq) - k + 1):
-            sub = seq[j : j + k]
+                fixed_pos = np.array(fixed_positions, dtype=int)
+                fixed_val = np.array(fixed_values, dtype=np.int8)
 
-            # Check pure k-mers (direct hash lookup)
-            idx = pure_kmer_set.get(sub)
-            if idx is not None:
-                counts[i, idx] += 1
+                # Extract just the fixed positions from all windows
+                fixed_windows = windows[:, :, fixed_pos]  # (N, num_wins, n_fixed)
 
-            # Check gapped k-mers
-            if gapped_patterns:
-                for pat, kidx in gapped_patterns:
-                    if pat.fullmatch(sub):
-                        counts[i, kidx] += 1
+                # A window matches if all fixed positions match their expected values
+                # AND no fixed position contains an N-base (-1)
+                matches = np.all(fixed_windows == fixed_val[None, None, :], axis=2)
+                counts[:, col_idx] = matches.sum(axis=1)
 
     return pd.DataFrame(counts, columns=kmer_list)
 
@@ -260,59 +331,58 @@ def screen_kmers(
         kmer_list = list(km_df.columns)
 
     counts = km_df.to_numpy(dtype=np.float64)
+    n_km = counts.shape[1]
 
-    # Compute statistics for each k-mer
-    # Mean and variance of counts
-    avg_n = counts.mean(axis=0)
-    avg_var = counts.var(axis=0)
+    # ── Vectorized statistics and correlations ──
+    avg_n = counts.mean(axis=0)       # (n_km,)
+    avg_var = counts.var(axis=0)      # (n_km,)
 
-    # Response means and variances
-    resp_mean = response.mean(axis=0)
-    resp_var = response.var(axis=0)
+    resp_mean = response.mean(axis=0)  # (n_resp,)
+    resp_var = response.var(axis=0)    # (n_resp,)
 
-    # Correlations: for each k-mer and each response column, compute Pearson r
-    # Pearson r = cov(x, y) / (std(x) * std(y))
-    results = []
-    for ki in range(len(kmer_list)):
-        x = counts[:, ki]
-        x_mean = avg_n[ki]
-        x_var = avg_var[ki]
+    # Center counts and response
+    counts_centered = counts - avg_n[None, :]     # (N, n_km)
+    resp_centered = response - resp_mean[None, :]  # (N, n_resp)
 
-        if x_var < 1e-15:
-            # No variance in k-mer counts -> skip or set correlation to 0
-            continue
+    # Covariance matrix: (n_km, n_resp) via matrix multiply
+    cov_matrix = (counts_centered.T @ resp_centered) / n_seqs  # (n_km, n_resp)
 
-        cors = np.zeros(n_resp)
-        max_r2 = 0.0
-        for ri in range(n_resp):
-            if resp_var[ri] < 1e-15:
-                cors[ri] = 0.0
-                continue
-            cov_xy = np.mean(x * response[:, ri]) - x_mean * resp_mean[ri]
-            r = cov_xy / np.sqrt(x_var * resp_var[ri])
-            cors[ri] = r
-            r2 = r * r
-            if r2 > max_r2:
-                max_r2 = r2
+    # Standard deviations
+    counts_std = np.sqrt(avg_var)   # (n_km,)
+    resp_std = np.sqrt(resp_var)    # (n_resp,)
 
-        if min_cor > 0 and max_r2 < min_cor * min_cor:
-            continue
+    # Pearson r = cov / (std_x * std_y), handle zero-variance
+    denom = np.outer(counts_std, resp_std)  # (n_km, n_resp)
+    safe_denom = np.where(denom > 1e-15, denom, 1.0)
+    r_matrix = cov_matrix / safe_denom      # (n_km, n_resp)
+    r_matrix[denom < 1e-15] = 0.0
 
-        row = {
-            "kmer": kmer_list[ki],
-            "max_r2": max_r2,
-            "avg_n": x_mean,
-            "avg_var": x_var,
-        }
-        for ri in range(n_resp):
-            row[resp_names[ri]] = cors[ri]
-        results.append(row)
+    # R-squared and max across response columns
+    r2_matrix = r_matrix ** 2               # (n_km, n_resp)
+    max_r2 = r2_matrix.max(axis=1)          # (n_km,)
 
-    if not results:
+    # Filter by min_cor and zero variance
+    valid = avg_var >= 1e-15
+    if min_cor > 0:
+        valid &= max_r2 >= min_cor * min_cor
+
+    valid_idx = np.where(valid)[0]
+
+    if len(valid_idx) == 0:
         cols = ["kmer", "max_r2", "avg_n", "avg_var"] + resp_names
         return pd.DataFrame(columns=cols)
 
-    df = pd.DataFrame(results)
+    # Build result DataFrame
+    result_data = {
+        "kmer": [kmer_list[i] for i in valid_idx],
+        "max_r2": max_r2[valid_idx],
+        "avg_n": avg_n[valid_idx],
+        "avg_var": avg_var[valid_idx],
+    }
+    for ri in range(n_resp):
+        result_data[resp_names[ri]] = r_matrix[valid_idx, ri]
+
+    df = pd.DataFrame(result_data)
     df = df.sort_values("max_r2", ascending=False).reset_index(drop=True)
     return df
 
