@@ -12,11 +12,10 @@ closely mirrors the R behaviour and can run on any machine.
 from __future__ import annotations
 
 import logging
-import multiprocessing as mp
 import os
 import time
 import warnings
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -1965,29 +1964,50 @@ def _regress_pwm_multi_kmers(
     if effective_workers > 1:
         # Parallel dispatch over candidate kmers. Mirrors R's
         # `safe_llply(..., .parallel=TRUE)` in regression-multi.kmers.R.
-        # Use "forkserver" so workers start from a clean child without the
-        # OMP / BLAS threadpool state already initialised in the parent
-        # (which can deadlock plain fork under pytest / numpy). Children set
-        # OMP_NUM_THREADS=1 to avoid oversubscribing the inner init_energies
-        # OMP pool.
+        #
+        # Use threads, not processes:
+        # - pyprego's hot C++ kernels (init_energies, choose_best_move)
+        #   release the GIL via Py_BEGIN_ALLOW_THREADS, so Python threads
+        #   get real parallelism inside them.
+        # - Avoids multiprocessing state (forkserver daemons, spawn resource
+        #   trackers) that would otherwise be inherited by a caller's own
+        #   fork-based pool (e.g. pycqream.distill's 60-worker fork pool)
+        #   and deadlock it.
+        #
+        # Thread-pool safety with downstream fork():
+        # numpy/scipy BLAS calls inside our worker threads spawn MKL /
+        # OpenBLAS internal thread pools in the *main* process. Those BLAS
+        # threads stay alive after our ThreadPoolExecutor exits and can
+        # break a downstream `os.fork()` (classic fork-after-threads: the
+        # forked child inherits thread-pool bookkeeping but no actual
+        # worker threads -> deadlock on the next BLAS call). Clamping the
+        # BLAS pools to 1 thread for the duration of our parallel section
+        # prevents them from spinning up a multi-thread pool in the first
+        # place. Use threadpoolctl when available; fall back to env vars.
         prev_omp = os.environ.get("OMP_NUM_THREADS")
         os.environ["OMP_NUM_THREADS"] = "1"
         try:
-            ctx = mp.get_context("forkserver")
-            results: dict[str, tuple[float, str | None]] = {}
-            with ProcessPoolExecutor(
-                max_workers=effective_workers, mp_context=ctx
-            ) as pool:
-                futures = {
-                    pool.submit(
-                        _eval_kmer_candidate, kmer, seq_train, resp_train,
-                        seq_val, resp_val, core_kwargs, final_metric, alternative,
-                    ): kmer
-                    for kmer in cand_kmers
-                }
-                for fut in as_completed(futures):
-                    kmer, val_score, err = fut.result()
-                    results[kmer] = (val_score, err)
+            try:
+                from threadpoolctl import threadpool_limits  # type: ignore
+                tp_ctx = threadpool_limits(limits=1)
+            except ImportError:
+                tp_ctx = None
+            try:
+                results: dict[str, tuple[float, str | None]] = {}
+                with ThreadPoolExecutor(max_workers=effective_workers) as pool:
+                    futures = {
+                        pool.submit(
+                            _eval_kmer_candidate, kmer, seq_train, resp_train,
+                            seq_val, resp_val, core_kwargs, final_metric, alternative,
+                        ): kmer
+                        for kmer in cand_kmers
+                    }
+                    for fut in as_completed(futures):
+                        kmer, val_score, err = fut.result()
+                        results[kmer] = (val_score, err)
+            finally:
+                if tp_ctx is not None:
+                    tp_ctx.unregister()
         finally:
             if prev_omp is None:
                 os.environ.pop("OMP_NUM_THREADS", None)
