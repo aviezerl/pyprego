@@ -164,3 +164,21 @@ the same).
 **Rationale**: pyprego is a prerequisite for a Python version of iceqream.
 These functions were identified by analyzing iceqream's R source code for
 `prego::` calls.
+
+## 15. threadpoolctl for BLAS pinning under our own thread pools
+
+**Decision**: Depend on `threadpoolctl` and clamp BLAS to one thread for the
+duration of any section that parallelises over a thread pool of our own
+(`calc_freq_local_pwm`, and the multi-kmer dispatch in `regression.py`).
+
+**Rationale**: The parallelism layer in these functions is a
+`ThreadPoolExecutor` over independent tasks; the NumPy calls inside each task
+then try to spin up their own BLAS pool on top of it. Measured on the
+3867-motif database, `calc_freq_local_pwm` runs 2.7x slower with OpenBLAS left
+unclamped (18.8 -> 51.9 ms per matrix at 16 workers). R prego solves the same
+problem with `RhpcBLASctl` via its `local_serial_blas()` helper.
+
+Clamping via the `OMP_NUM_THREADS` environment variable alone is unreliable --
+OpenBLAS and MKL read it at load time, not per call -- so the environment
+variable stays only as a fallback for installations without threadpoolctl. The
+package is pure Python with no dependencies of its own.

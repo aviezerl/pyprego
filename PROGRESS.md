@@ -47,6 +47,21 @@
 - [x] `screen_kmers(sequences, response, kmer_len, kmers, max_gap, min_gap, seed, min_cor)` -- screen k-mers for correlation with 1D/2D response
 - [x] Unit tests: 30 tests in tests/test_kmers.py (all passing)
 
+### Expected local PWM over base frequencies (2026-09-01)
+- [x] `calc_freq_local_pwm()` (motif_db.py) -- score a whole MotifDB against a
+      per-position base frequency matrix at every start position, for both
+      `combine="multiply"` (log of the expected likelihood) and
+      `combine="sum"` (expected log-likelihood), forward or bidirectional
+- [x] `batch_freq_local_pwm()` / `freq_local_pwm_plan()` /
+      `freq_local_pwm_block_size()` (compute.py) -- array-level kernel: one
+      BLAS product per motif block, then a banded fold via `as_strided`
+- [x] Length-sorted motif blocking, block width derived from the database and
+      thread count only, so results are bit-identical across batch sizes
+- [x] BLAS pinned to one thread under the worker pool (see DECISIONS.md #15)
+- [x] Golden master data from R (`calc_freq_local_pwm.json`) plus the four
+      correctness anchors ported from R's `test-freq-local-pwm.R`:
+      20 tests in tests/test_ported_freq_local_pwm.py, 5 in tests/golden_master/
+
 ### PWM computation engine (compute.py) -- fully implemented (2026-04-03)
 - [x] `compute_pwm()` -- PWM energy scoring with logSumExp/max aggregation, bidirectional, spatial weighting, prior
 - [x] `compute_local_pwm()` -- per-position PWM scoring with bidirectional support and spatial weighting
