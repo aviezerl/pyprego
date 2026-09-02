@@ -11,31 +11,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `calc_freq_local_pwm`: score every motif in a database against a per-position
   base frequency matrix at every start position, returning a motifs x positions
   array. Where `compute_local_pwm` scores one concrete sequence, this scores an
-  ensemble summarised by its per-position nucleotide distribution. Two modes,
-  `combine="multiply"` (log of the expected likelihood, comparable across
-  motifs) and `combine="sum"` (expected log-likelihood, exact for any joint
-  distribution over positions). Port of the R prego function of the same name,
-  verified against it to 7.1e-14 on both bundled databases.
+  ensemble summarised by its per-position nucleotide distribution. Two modes:
+  `combine="multiply"` (log of the expected likelihood, giving every motif the
+  same score on a flat ensemble, so rows are comparable) and `combine="sum"`
+  (expected log-likelihood, exact for any joint distribution over positions).
+  Both reduce to `compute_local_pwm` when the frequency matrix is one-hot. Port
+  of the R prego function of the same name, verified against it to 7.1e-14 on
+  both bundled databases, in both modes and both strand settings.
 - `n_workers` parameter for `regress_pwm(multi_kmers=True)`, parallelising
-  candidate-kmer evaluation. Defaults to 1, so existing calls are unchanged.
-- C extension for `screen_kmers`, gapped k-mer support and optimizer
-  instrumentation.
-- Batch energy C++ extension and `kmer_sequence_length` support.
+  candidate-k-mer evaluation over a thread pool. Defaults to 1, so existing
+  calls are unchanged.
 
 ### Changed
 
-- Multi-k-mer parallelism now uses threads with `threadpoolctl` rather than
-  forkserver processes. The forkserver and spawn daemons were inherited by any
-  downstream fork-based pool and deadlocked it. PSSMs are bit-identical to the
-  previous serial and forkserver results.
-- C++ kernels release the GIL and take a C-contiguous fast path, so threaded
-  callers get real parallelism inside them.
-- `pymisha` and `logomaker` moved from optional to core dependencies.
+- `pymisha` and `logomaker` are now core dependencies rather than optional
+  extras.
+
+### Removed
+
+- The `genomic`, `viz` and `all` extras. Their contents are now installed by
+  default, so `pip install pyprego` covers what `pyprego[all]` used to.
 
 ### Dependencies
 
-- `threadpoolctl` added, with a fallback to the `OMP_NUM_THREADS` environment
-  variable when it is absent.
+- `threadpoolctl>=3.0` added, used to keep BLAS single-threaded inside worker
+  threads. Falls back to the `OMP_NUM_THREADS` environment variable when absent.
 
 ## [0.0.2] - 2026-04-03
 
