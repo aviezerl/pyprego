@@ -24,7 +24,6 @@ from scipy import stats as scipy_stats
 from .compute import (
     _compute_log_pssm,
     _encode_sequences,
-    _prepare_pssm,
     batch_extract_energies,
     batch_freq_local_pwm,
     compute_pwm,
